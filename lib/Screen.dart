@@ -1,5 +1,9 @@
+import 'package:chat_gpt_sdk/chat_gpt_sdk.dart';
 import 'package:flutter/material.dart';
 import 'package:velocity_x/velocity_x.dart';
+import 'threedots.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'chatmessage.dart';
 
 class Screen extends StatefulWidget {
   const Screen({super.key});
@@ -9,38 +13,134 @@ class Screen extends StatefulWidget {
 }
 
 class _ScreenState extends State<Screen> {
+  final TextEditingController _controller = TextEditingController();
+  final List<ChatMessage> _messages = [];
+  late OpenAI? chatGPT;
+  bool _isImageSearch = false;
 
-  Widget _buildTextComposer(){
-    return Row(
-      children: [
-        const Expanded(
-          child: TextField(
-            decoration: InputDecoration.collapsed(hintText: "Send"),
-          ),
-          ),
-          IconButton( 
-            icon: const Icon(Icons.send),
-            onPressed: () {},
-            ),
-    ],
-      ).px8();
+  bool _isTyping = false;
+
+ // StreamSubscription? _subscription;
+
+  @override
+  void initState() {
+     chatGPT = OpenAI.instance.build(
+        token: dotenv.env["API_KEY"],
+        baseOption: HttpSetup(receiveTimeout: 60000));
+    super.initState();
   }
 
+  @override
+  void dispose() {
+    chatGPT?.close();
+    chatGPT?.genImgClose();
+    super.dispose();
+  }
 
+  void sendMessage() async {
+    if(_controller.text.isEmpty) return;
+    ChatMessage message = ChatMessage(
+      text: _controller.text, 
+      sender: "user",
+      );
+
+    setState(() {
+      _messages.insert(0, message);
+    });
+
+    _controller.clear();
+
+    if (_isImageSearch) {
+      final request = GenerateImage(message.text, 1, size: "256x256");
+
+      final response = await chatGPT!.generateImage(request);
+      Vx.log(response!.data!.last!.url!);
+      insertNewData(response.data!.last!.url!, isImage: true);
+    } else {
+      final request =
+          CompleteText(prompt: message.text, model: kTranslateModelV3);
+
+      final response = await chatGPT!.onCompleteText(request: request);
+      Vx.log(response!.choices[0].text);
+      insertNewData(response.choices[0].text, isImage: false);
+    }
+  }
+
+   void insertNewData(String response, {bool isImage = false}) {
+    ChatMessage botMessage = ChatMessage(
+      text: response,
+      sender: "bot",
+      //isImage: isImage,
+    );
+
+    setState(() {
+      _isTyping = false;
+      _messages.insert(0, botMessage);
+    });
+  }
+
+  Widget _buildTextComposer() {
+    return Row(
+      children: [
+        Expanded(
+          child: TextField(
+            controller: _controller,
+            onSubmitted: (value) => sendMessage(),
+            decoration: const InputDecoration.collapsed(
+                hintText: "Ask me a question"),
+          ),
+        ),
+        ButtonBar(
+          children: [
+            IconButton(
+              icon: const Icon(Icons.send),
+              onPressed: () {
+                _isImageSearch = false;
+                sendMessage();
+              },
+            ),
+            TextButton(
+                onPressed: () {
+                  _isImageSearch = true;
+                  sendMessage();
+                },
+                child: const Text("Generate Image"))
+          ],
+        ),
+      ],
+    ).px8();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("CarChat",)),
-      body: Column(
-        children: [
-          Container(
-            decoration: BoxDecoration(
-              color: context.cardColor,),
-            child: _buildTextComposer(),
-            )
-        ],
-      ),
-    );
+        appBar: AppBar(title: const Text("CarChat")),
+        body: SafeArea(
+          child: Column(
+            children: [
+              Flexible(
+                  child: ListView.builder(
+                reverse: true,
+                padding: Vx.m8,
+                itemCount: _messages.length,
+                itemBuilder: (context, index) {
+                  return _messages[index];
+                },
+              )),
+              if (_isTyping) const ThreeDots(),
+              const Divider(
+                height: 1.0,
+              ),
+              Container(
+                decoration: BoxDecoration(
+                  color: context.cardColor,
+                ),
+                child: _buildTextComposer(),
+              )
+            ],
+          ),
+        ));
   }
 }
+
+ 
